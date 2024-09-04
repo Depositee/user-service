@@ -8,8 +8,7 @@
   "dependencies": {
     "@elysiajs/jwt": "^1.1.0",
     "argon2": "^0.41.1",
-    "duckdb": "^1.0.0",
-    "duckdb-async": "^1.0.0",
+    "crypto-random-string": "^5.0.0",
     "elysia": "latest",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-prettier": "^5.2.1",

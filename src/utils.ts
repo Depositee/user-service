@@ -1,6 +1,4 @@
-export const mailRegex = /^[^@]+@[^@]+\.[^@]+$/g;
-
-export interface userRegisterSchema {
+export type UserRegisterSchema = {
   username: string;
   password: string;
   email: string;
@@ -8,10 +6,41 @@ export interface userRegisterSchema {
   lastName: string;
   phoneNumber: string;
   roomNumber: string;
-}
+  salt?: string;
+  registeredOn: bigint;
+  lastLogInOn: bigint;
+};
+export type UserGeneralSchema = {
+  username?: string;
+  firstName?: string;
+  email?: string;
+  lastName?: string;
+  password?: string;
+  salt?: string;
+  phoneNumber?: string;
+  roomNumber?: string;
+  role?: number;
+  profileImage?: string;
+  registeredOn?: bigint;
+  lastLogInOn?: bigint;
+  id?: string;
+};
+export type UserUpdateScheme = {
+  username?: string;
+  firstName?: string;
+  email?: string;
+  lastName?: string;
+  password?: string;
+  newPassword?: string;
+  confirmNewPassword?: string;
+  profileImage?: string;
+  phoneNumber?: string;
+  roomNumber?: string;
+  lastLogInOn?: bigint;
+};
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const isUserRegisterSchema = (obj: any): obj is userRegisterSchema => {
+export const isUserRegisterSchema = (obj: any): obj is UserRegisterSchema => {
   return (
     obj &&
     obj.username &&
@@ -23,14 +52,14 @@ export const isUserRegisterSchema = (obj: any): obj is userRegisterSchema => {
     obj.roomNumber
   );
 };
-export interface userLoginSchema {
+export type UserLoginSchema = {
   username: string;
   password: string;
-}
+};
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const isUserLoginSchema = (obj: any): obj is userLoginSchema => {
-  return obj && obj.username && obj.password;
+export const isUserLoginSchema = (obj: any): obj is UserLoginSchema => {
+  return obj && obj.email && obj.password;
 };
 
 export const commonHeaders = {
@@ -41,13 +70,12 @@ export const commonHeaders = {
 export function usernameValidator(username: string): boolean {
   return (
     username.length >= 4 &&
-    username.length <= 20 &&
-    /^[a-zA-Z0-9_]+$/.test(username)
+    username.length <= 32 &&
+    /^[a-z0-9_]+$/.test(username)
   );
 }
 
 export function criteriaCount(criteria: PasswordCriteria): number {
-  if (criteria <= 0) return 0;
   return (
     criteria!.toString(2).match(/1/g)!.length &&
     criteria & PasswordCriteria.LENGTH
@@ -72,49 +100,63 @@ export enum PasswordCriteria {
   NO_SPACE = 32,
 }
 
-export function isUserSchemaValid(obj: userRegisterSchema): {
+export function isUserSchemaValid(obj: UserRegisterSchema): {
   result: boolean;
   reason: RegisterFailReason;
   password?: PasswordCriteria;
 } {
+  const passwordValidation = passwordValidator(obj.password);
   return {
     result:
       usernameValidator(obj.username) &&
-      criteriaCount(passwordValidator(obj.password)) > 3 &&
-      ((passwordValidator(obj.password) >> 5) & 1) == 1 &&
+      criteriaCount(passwordValidation) >= 3 &&
+      ((passwordValidation >> 4) & 11) == 3 &&
       emailValidator(obj.email) &&
       phoneNumberValidator(obj.phoneNumber),
     reason:
       (usernameValidator(obj.username) ? 0 : RegisterFailReason.USERNAME) |
-      (criteriaCount(passwordValidator(obj.password)) > 3
+      (criteriaCount(passwordValidation) >= 3
         ? 0
         : RegisterFailReason.PASSWORD) |
-      (passwordValidator(obj.password) & PasswordCriteria.LENGTH
+      (((passwordValidation >> 4) & 11) == 3
         ? 0
         : RegisterFailReason.PASSWORD) |
       (emailValidator(obj.email) ? 0 : RegisterFailReason.EMAIL) |
       (phoneNumberValidator(obj.phoneNumber)
         ? 0
         : RegisterFailReason.PHONE_NUMBER),
-    password: passwordValidator(obj.password),
+    password: passwordValidation,
   };
 }
 
 export function passwordValidator(password: string): PasswordCriteria {
-  let criteria: PasswordCriteria = 0;
-  if (password.length > 8) criteria += PasswordCriteria.LENGTH;
-  if (/[a-z]/.test(password)) criteria += PasswordCriteria.LOWER;
-  if (/[A-Z]/.test(password)) criteria += PasswordCriteria.UPPER;
-  if (/[0-9]/.test(password)) criteria += PasswordCriteria.NUMBER;
+  let criteria: PasswordCriteria = 32;
+  if (password.length >= 8) criteria |= PasswordCriteria.LENGTH;
+  if (/[a-z]/.test(password)) criteria |= PasswordCriteria.LOWER;
+  if (/[A-Z]/.test(password)) criteria |= PasswordCriteria.UPPER;
+  if (/\d+/.test(password)) criteria |= PasswordCriteria.NUMBER;
   if (/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]+/.test(password))
-    criteria += PasswordCriteria.SYMBOL;
-  if (!/\s/.test(password)) criteria += PasswordCriteria.NO_SPACE;
+    criteria |= PasswordCriteria.SYMBOL;
+  if (/\s/.test(password)) criteria &= PasswordCriteria.NO_SPACE;
   return criteria;
 }
 
 export function emailValidator(email: string): boolean {
-  return mailRegex.test(email);
+  const tested = /^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$/.test(email);
+  return tested;
 }
 export function phoneNumberValidator(phoneNumber: string): boolean {
   return /^[0-9-]{10}$/.test(phoneNumber);
 }
+
+import { Database } from "bun:sqlite";
+
+export function createDatabaseIfItDoesNotExist() {
+  const db = new Database(DATABASE_NAME);
+  db.run(
+    "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT NOT NULL, password TEXT NOT NULL, email TEXT NOT NULL, firstName TEXT NOT NULL, lastName TEXT NOT NULL, phoneNumber TEXT NOT NULL, roomNumber TEXT NOT NULL, salt TEXT NOT NULL, role INT NOT NULL, profileImage TEXT, registeredOn BIGINT NOT NULL, lastLogInOn BIGINT NOT NULL,  UNIQUE(username, email, phoneNumber))",
+  );
+  db.close();
+}
+
+export const DATABASE_NAME = "data/users.db";
