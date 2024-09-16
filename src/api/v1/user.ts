@@ -9,9 +9,14 @@ import {
   UserRegisterSchema,
   UserUpdateScheme,
 } from "../../utils";
+import { Context } from "elysia";
 import { Database } from "bun:sqlite";
 import argon2 from "argon2";
 import jwt from "@elysiajs/jwt";
+
+type Params = {
+  username: string;
+};
 
 export async function createUser({
   set,
@@ -377,48 +382,34 @@ export async function deleteUser({
   return "User Deleted";
 }
 
-// Define the function to verify the JWT
-export async function verifyToken({
-  jwt, // Access jwt from the Elysia context
-  headers,
-  set,
-  cookie: { auth },
-}: {
-  set: { status: number };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  headers: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  cookie: { auth: any };
-  // Access jwt from the Elysia context
-  jwt: {
-    sign: (payload: any) => Promise<string>;
-    verify: (token: string) => Promise<any>;
-  };
-}) {
-  let token = headers.authorization;
+export async function verifyToken(context: Context) {
+  const { headers, cookie } = context;
+  const userToken = (context as any).userToken; // Assume JWT functions are available under `userToken`
 
-  // Check for token in Authorization header or cookies
-  if (token !== undefined) {
-    token = token.replace("Bearer ", "");
-  } else if (auth?.value) {
-    token = auth.value;
-  }
+  // Extract the JWT from the Authorization header or cookie
+  let token = headers.authorization
+    ? headers.authorization.replace("Bearer ", "")
+    : cookie?.auth?.value;
 
-  // If token is missing, return 401
-  if (token === undefined) {
-    set.status = 401;
+  if (!token) {
+    context.set.status = 401; // Unauthorized
     return "Token is missing";
   }
 
   try {
-    // Verify the token using the Elysia jwt instance
-    const verifiedToken = await jwt.verify(token);
+    const verifiedToken = await userToken.verify(token); // Verify the JWT
+
+    if (!verifiedToken) {
+      context.set.status = 401; // Unauthorized
+      return "Invalid or expired token";
+    }
+
     return {
       valid: true,
-      data: verifiedToken, // return token payload data
+      user: verifiedToken, // Optionally return the decoded user information
     };
-  } catch (err) {
-    set.status = 401;
+  } catch (error) {
+    context.set.status = 401; // Unauthorized
     return "Invalid or expired token";
   }
 }

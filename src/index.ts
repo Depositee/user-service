@@ -22,38 +22,11 @@ const app = new Elysia()
   // Public Routes (No JWT Verification)
   .post("/api/v1/register", createUser)
   .post("/api/v1/login", login)
-
-  // Protected Routes (Require JWT Verification)
-  .get("/api/v1/user/:username", async (context) => {
-    const tokenResult = await verifyToken({
-      jwt: context.userToken, // Elysia provides jwt in the context
-      headers: context.headers,
-      set: { status: Number(context.set.status) },
-      cookie: { auth: context.cookie?.auth || { value: undefined } },
-    });
-    if (typeof tokenResult === "string") {
-      return tokenResult; // Return the error message directly
-    }
-    if (!tokenResult.valid) {
-      return "Unauthorized access"; // Return error if token is not valid
-    }
-
-    // Proceed to get user if token is valid
-    return getUser({
-      ...context,
-      set: { status: Number(context.set.status) },
-      cookie: {
-        ...context.cookie,
-        auth: context.cookie.auth || { value: undefined }, // Provide a default auth value
-      },
-    });
-  })
-
   .get("/api/v1/user/:username", getUser)
   .put("/api/v1/user/update", updateSelfProfile)
   .delete("/api/v1/user/delete", deleteUser)
   .get("/api/v1/*", fallbackRoute)
-  .get("/api/v1/*", fallbackRoute)
+  .post("/api/v1/verify-token", verifyToken)
   .listen(process.env.PORT!);
 
 createDatabaseIfItDoesNotExist();
