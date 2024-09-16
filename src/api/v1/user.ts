@@ -10,8 +10,8 @@ import {
   UserUpdateScheme,
 } from "../../utils";
 import { Database } from "bun:sqlite";
-
 import argon2 from "argon2";
+import jwt from "@elysiajs/jwt";
 
 export async function createUser({
   set,
@@ -375,4 +375,50 @@ export async function deleteUser({
   query2.run({ username: profile.username });
   db.close();
   return "User Deleted";
+}
+
+// Define the function to verify the JWT
+export async function verifyToken({
+  jwt, // Access jwt from the Elysia context
+  headers,
+  set,
+  cookie: { auth },
+}: {
+  set: { status: number };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  headers: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  cookie: { auth: any };
+  // Access jwt from the Elysia context
+  jwt: {
+    sign: (payload: any) => Promise<string>;
+    verify: (token: string) => Promise<any>;
+  };
+}) {
+  let token = headers.authorization;
+
+  // Check for token in Authorization header or cookies
+  if (token !== undefined) {
+    token = token.replace("Bearer ", "");
+  } else if (auth?.value) {
+    token = auth.value;
+  }
+
+  // If token is missing, return 401
+  if (token === undefined) {
+    set.status = 401;
+    return "Token is missing";
+  }
+
+  try {
+    // Verify the token using the Elysia jwt instance
+    const verifiedToken = await jwt.verify(token);
+    return {
+      valid: true,
+      data: verifiedToken, // return token payload data
+    };
+  } catch (err) {
+    set.status = 401;
+    return "Invalid or expired token";
+  }
 }
