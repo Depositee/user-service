@@ -12,6 +12,7 @@
     "elysia": "latest",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-prettier": "^5.2.1",
+    "mongodb": "^6.9.0",
     "prettier": "^3.3.3"
   },
   "devDependencies": {

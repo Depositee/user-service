@@ -1,22 +1,28 @@
 import cryptoRandomString from "crypto-random-string";
 import {
-  DATABASE_NAME,
   isUserLoginSchema,
   isUserRegisterSchema,
   isUserSchemaValid,
-  UserGeneralSchema,
   UserLoginSchema,
   UserRegisterSchema,
   UserUpdateScheme,
 } from "../../utils";
 import { Context } from "elysia";
-import { Database } from "bun:sqlite";
+// import { Database } from "bun:sqlite";
 import argon2 from "argon2";
-import jwt from "@elysiajs/jwt";
+// import jwt from "@elysiajs/jwt";
+import { MongoClient } from "mongodb";
+import { getDb } from "../../utils";
 
 type Params = {
   username: string;
 };
+
+if (!process.env.MONGO_URI) {
+  throw new Error("MONGO_URI environment variable is not defined");
+}
+const uri = process.env.MONGO_URI;
+const client = new MongoClient(uri);
 
 export async function createUser({
   set,
@@ -29,41 +35,54 @@ export async function createUser({
     set!.status = 400;
     return "Bad Request";
   }
+
   const userSchemaVerified = isUserSchemaValid(body);
   if (!userSchemaVerified.result) {
     set.status = 400;
     return userSchemaVerified;
   }
-  const schemaAlignedUser: UserRegisterSchema = body as UserRegisterSchema;
-  const db = new Database(DATABASE_NAME, { strict: true });
-  // check if email, username, or phone number already exists
-  const query = db.query(
-    `SELECT * FROM users WHERE email = $email OR username = $username OR phoneNumber = $phoneNumber`,
-  );
-  const dataInside = query.all(schemaAlignedUser);
-  if (dataInside.length > 0) {
-    set.status = 409;
-    db.close();
-    return "Cannot create user";
-  }
-  const salt = cryptoRandomString({ length: 20, type: "url-safe" });
-  schemaAlignedUser.salt = salt;
-  schemaAlignedUser.password = await argon2.hash(
-    schemaAlignedUser.password + salt + process.env.PASSWORD_PEPPER,
-  );
-  const currentTime = Date.now().toFixed(0);
-  schemaAlignedUser.registeredOn = BigInt(currentTime);
-  schemaAlignedUser.lastLogInOn = BigInt(currentTime);
-  // insert user
-  const query2 = db.query(
-    `INSERT INTO users (username, password, email, firstName, lastName, phoneNumber, roomNumber, salt, registeredOn, lastLogInOn, role) 
-    VALUES ($username, $password, $email, $firstName, $lastName, $phoneNumber, $roomNumber, $salt, $registeredOn, $lastLogInOn,0)`,
-  );
-  query2.run(schemaAlignedUser);
-  db.close();
-  console.log("User Created : ", body.username);
 
-  return userSchemaVerified;
+  const schemaAlignedUser: UserRegisterSchema = body as UserRegisterSchema;
+
+  try {
+    await client.connect();
+    const db = client.db("test");
+    const collection = db.collection("users");
+
+    // Check if the email, username, or phone number already exists
+    const existingUser = await collection.findOne({
+      $or: [
+        { email: schemaAlignedUser.email },
+        { username: schemaAlignedUser.username },
+        { phoneNumber: schemaAlignedUser.phoneNumber },
+      ],
+    });
+
+    if (existingUser) {
+      set.status = 409;
+      return "Cannot create user";
+    }
+
+    const salt = cryptoRandomString({ length: 20, type: "url-safe" });
+    schemaAlignedUser.salt = salt;
+    schemaAlignedUser.password = await argon2.hash(
+      schemaAlignedUser.password + salt + process.env.PASSWORD_PEPPER,
+    );
+    const currentTime = Date.now().toFixed(0);
+    schemaAlignedUser.registeredOn = BigInt(currentTime);
+    schemaAlignedUser.lastLogInOn = BigInt(currentTime);
+
+    // Insert user into MongoDB
+    const result = await collection.insertOne({
+      ...schemaAlignedUser,
+      role: 0, // Default role
+    });
+
+    console.log("User Created: ", schemaAlignedUser.username);
+    return userSchemaVerified;
+  } finally {
+    await client.close();
+  }
 }
 
 export async function login({
@@ -73,57 +92,55 @@ export async function login({
   cookie: { auth },
 }: {
   set: { status: number };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   body: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   userToken: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   cookie: { auth: any };
 }) {
   if (!isUserLoginSchema(body)) {
     set.status = 401;
     return "Bad Request";
   }
+
   body = body as UserLoginSchema;
   if (!body.email && !body.username) {
     set.status = 401;
     return "Bad Request";
   }
-  const db = new Database(DATABASE_NAME, { strict: true });
-  const query = db.query(`SELECT * FROM users WHERE email = $email`);
-  const data: UserGeneralSchema = query.get(body) as UserGeneralSchema;
-  if (!data) {
+
+  const db = getDb();
+  const usersCollection = db.collection("users");
+
+  // Search user by email or username
+  const data = await usersCollection.findOne({
+    $or: [{ email: body.email }, { username: body.username }],
+  });
+
+  if (!data || !data.salt || !data.password) {
     set.status = 401;
-    db.close();
-    return "Invalid Credentials";
-  }
-  if (!data.salt || !data.password) {
-    set.status = 401;
-    db.close();
     return "Invalid Credentials";
   }
 
   const isValidCredentials = await argon2.verify(
-    data.password!,
+    data.password,
     body.password + data.salt + process.env.PASSWORD_PEPPER,
   );
-  //console.log("Credentials : ", isValidCredentials);
 
   if (!isValidCredentials) {
     set.status = 401;
-    db.close();
     return "Invalid Credentials";
   }
+
   auth.set({
     value: await userToken.sign({
       username: data.username,
       iat: Date.now(),
-      id: data.id,
+      id: data._id,
     }),
     httpOnly: process.env.IS_DEV === "true",
     maxAge: 60 * 60 * 24 * 7,
     path: "/api/v1",
   });
+
   return auth.value;
 }
 
@@ -136,22 +153,18 @@ export async function getUser({
 }: {
   params: { username: string };
   set: { status: number };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   body: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   headers: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   cookie: { auth: any };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   userToken: any;
 }) {
   let token = headers.authorization;
   if (token !== undefined) {
     token = token.replace("Bearer ", "");
-  }
-  if (headers.authorization === undefined) {
+  } else if (auth.value !== undefined) {
     token = auth.value;
   }
+
   if (token === undefined) {
     set.status = 401;
     return "Unauthorized";
@@ -162,14 +175,23 @@ export async function getUser({
     set.status = 401;
     return "Unauthorized";
   }
+
   profile = profile as {
     username: string;
     iat: number;
   };
-  const db = new Database(DATABASE_NAME, { strict: true });
-  const query = db.query(`SELECT * FROM users WHERE username = $username`);
-  const data = query.get({ username: username }) as UserGeneralSchema;
-  db.close();
+
+  const db = getDb();
+  const usersCollection = db.collection("users");
+
+  // Fetch user data by username
+  const data = await usersCollection.findOne({ username });
+
+  if (!data) {
+    set.status = 404;
+    return "User not found";
+  }
+
   if (profile.username !== data.username) {
     return {
       username: data.username,
@@ -201,20 +223,17 @@ export async function updateSelfProfile({
 }: {
   set: { status: number };
   body: UserUpdateScheme;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   headers: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   cookie: { auth: any };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   userToken: any;
 }) {
   let token = headers.authorization;
   if (token !== undefined) {
     token = token.replace("Bearer ", "");
-  }
-  if (headers.authorization === undefined) {
+  } else if (auth.value !== undefined) {
     token = auth.value;
   }
+
   if (token === undefined) {
     set.status = 401;
     return "Unauthorized";
@@ -225,95 +244,79 @@ export async function updateSelfProfile({
     set.status = 401;
     return "Unauthorized";
   }
+
   profile = profile as {
     username: string;
     iat: number;
   };
-  const db = new Database(DATABASE_NAME, { strict: true });
-  const query = db.query(`SELECT * FROM users WHERE username = $username`);
-  const data = query.get({ username: profile.username }) as UserGeneralSchema;
 
-  if (!data.password) {
+  const db = getDb();
+  const usersCollection = db.collection("users");
+
+  // Fetch the current user data
+  const data = await usersCollection.findOne({ username: profile.username });
+
+  if (!data || !data.password) {
     set.status = 401;
-    db.close();
     return "Invalid Credentials";
   }
 
   const isPasswordCorrect = await argon2.verify(
-    data.password!,
-    body.password + data.salt! + process.env.PASSWORD_PEPPER,
+    data.password,
+    body.password + data.salt + process.env.PASSWORD_PEPPER,
   );
+
   if (!isPasswordCorrect) {
     set.status = 401;
     return "Wrong Password";
   }
 
-  // check if username is taken
+  // Check if username, email, or phone number is already taken
   if (body.username) {
-    const query1 = db.query(`SELECT * FROM users WHERE username = $username`);
-    const dataInside = query1.all({ username: body.username });
-    if (dataInside.length > 0) {
+    const existingUsername = await usersCollection.findOne({
+      username: body.username,
+    });
+    if (existingUsername) {
       set.status = 409;
-      db.close();
       return "Username already taken";
     }
   }
-  // email too
+
   if (body.email) {
-    const query1 = db.query(`SELECT * FROM users WHERE email = $email`);
-    const dataInside = query1.all({ email: body.email });
-    if (dataInside.length > 0) {
+    const existingEmail = await usersCollection.findOne({
+      email: body.email,
+    });
+    if (existingEmail) {
       set.status = 409;
-      db.close();
       return "Email already taken";
     }
   }
-  // also phone number
+
   if (body.phoneNumber) {
-    const query1 = db.query(
-      `SELECT * FROM users WHERE phoneNumber = $phoneNumber`,
-    );
-    const dataInside = query1.all({ phoneNumber: body.phoneNumber });
-    if (dataInside.length > 0) {
+    const existingPhone = await usersCollection.findOne({
+      phoneNumber: body.phoneNumber,
+    });
+    if (existingPhone) {
       set.status = 409;
-      db.close();
       return "Phone Number already taken";
     }
   }
-  // update user profile but if null then keep the existing value in the Database
-  if (!body.username) {
-    body.username = profile.username;
-  }
-  if (!body.firstName) {
-    body.firstName = data.firstName;
-  }
-  if (!body.lastName) {
-    body.lastName = data.lastName;
-  }
-  if (!body.phoneNumber) {
-    body.phoneNumber = data.phoneNumber;
-  }
-  if (!body.roomNumber) {
-    body.roomNumber = data.roomNumber;
-  }
-  if (!body.profileImage) {
-    body.profileImage = data.profileImage;
-  }
 
-  const query2 = db.query(
-    `UPDATE users SET username = $username, firstName = $firstName, lastName = $lastName, phoneNumber = $phoneNumber, roomNumber = $roomNumber, profileImage = $profileImage WHERE username = $origUsername`,
+  // Update user profile
+  await usersCollection.updateOne(
+    { username: profile.username },
+    {
+      $set: {
+        username: body.username || profile.username,
+        firstName: body.firstName || data.firstName,
+        lastName: body.lastName || data.lastName,
+        phoneNumber: body.phoneNumber || data.phoneNumber,
+        roomNumber: body.roomNumber || data.roomNumber,
+        profileImage: body.profileImage || data.profileImage,
+      },
+    },
   );
 
-  query2.run({
-    username: body.username!,
-    firstName: body.firstName!,
-    lastName: body.lastName!,
-    phoneNumber: body.phoneNumber!,
-    roomNumber: body.roomNumber!,
-    profileImage: body.profileImage!,
-    origUsername: profile.username!,
-  });
-  db.close();
   return "Profile Updated";
 }
 
@@ -321,25 +324,21 @@ export async function deleteUser({
   userToken,
   headers,
   set,
-  body,
   cookie: { auth },
 }: {
   set: { status: number };
-  body: UserUpdateScheme;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  body: any;
   headers: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   cookie: { auth: any };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   userToken: any;
 }) {
   let token = headers.authorization;
   if (token !== undefined) {
     token = token.replace("Bearer ", "");
-  }
-  if (headers.authorization === undefined) {
+  } else if (auth.value !== undefined) {
     token = auth.value;
   }
+
   if (token === undefined) {
     set.status = 401;
     return "Unauthorized";
@@ -350,35 +349,18 @@ export async function deleteUser({
     set.status = 401;
     return "Unauthorized";
   }
+
   profile = profile as {
     username: string;
     iat: number;
   };
-  const db = new Database(DATABASE_NAME, { strict: true });
-  const query = db.query(`SELECT * FROM users WHERE username = $username`);
-  const data = query.get({ username: profile.username }) as UserGeneralSchema;
-  if (!body) {
-    set.status = 401;
-    return "Bad Request";
-  }
-  if (!data) {
-    set.status = 401;
-    db.close();
-    return "Invalid Credentials";
-  }
 
-  const isPasswordCorrect = await argon2.verify(
-    data.password!,
-    body.password + data.salt! + process.env.PASSWORD_PEPPER,
-  );
-  if (!isPasswordCorrect) {
-    set.status = 401;
-    return "Wrong Password";
-  }
-  // delete user from database
-  const query2 = db.query(`DELETE FROM users WHERE username = $username`);
-  query2.run({ username: profile.username });
-  db.close();
+  const db = getDb();
+  const usersCollection = db.collection("users");
+
+  // Delete the user by username
+  await usersCollection.deleteOne({ username: profile.username });
+
   return "User Deleted";
 }
 

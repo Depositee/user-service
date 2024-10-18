@@ -150,13 +150,28 @@ export function phoneNumberValidator(phoneNumber: string): boolean {
 }
 
 import { Database } from "bun:sqlite";
+import { MongoClient, Db } from "mongodb";
 
-export function createDatabaseIfItDoesNotExist() {
-  const db = new Database(DATABASE_NAME);
-  db.run(
-    "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT NOT NULL, password TEXT NOT NULL, email TEXT NOT NULL, firstName TEXT NOT NULL, lastName TEXT NOT NULL, phoneNumber TEXT NOT NULL, roomNumber TEXT NOT NULL, salt TEXT NOT NULL, role INT NOT NULL, profileImage TEXT, registeredOn BIGINT NOT NULL, lastLogInOn BIGINT NOT NULL,  UNIQUE(username, email, phoneNumber))",
-  );
-  db.close();
+let db: Db | null = null;
+
+export async function connectToDatabase() {
+  // const db = new Database(DATABASE_NAME);\
+  if (!process.env.MONGO_URI) {
+    throw new Error("MONGO_URI environment variable is not defined");
+  }
+  const uri = process.env.MONGO_URI;
+  const client = new MongoClient(uri);
+  try {
+    await client.connect();
+    db = client.db("test"); // Specify the database here
+    console.log("Connected to MongoDB, using database 'test'.");
+  } catch (error) {
+    console.error("Failed to connect to MongoDB", error);
+    throw error;
+  }
 }
 
-export const DATABASE_NAME = "data/users.db";
+export function getDb() {
+  if (!db) throw new Error("Database not connected");
+  return db;
+}

@@ -9,7 +9,7 @@ import {
   updateSelfProfile,
   verifyToken,
 } from "./api/v1/user";
-import { createDatabaseIfItDoesNotExist } from "./utils";
+import { connectToDatabase } from "./utils";
 const app = new Elysia()
   .use(
     jwt({
@@ -29,7 +29,7 @@ const app = new Elysia()
   .post("/api/v1/verify-token", verifyToken)
   .listen(process.env.PORT!);
 
-createDatabaseIfItDoesNotExist();
+connectToDatabase();
 
 console.log(
   `🦊 Elysia is running at http://${app.server?.hostname}:${app.server?.port}`,
