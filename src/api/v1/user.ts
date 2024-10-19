@@ -13,6 +13,7 @@ import argon2 from "argon2";
 // import jwt from "@elysiajs/jwt";
 import { MongoClient } from "mongodb";
 import { getDb } from "../../utils";
+import { ObjectId } from "mongodb";
 
 type Params = {
   username: string;
@@ -192,6 +193,86 @@ export async function getUser({
     return "User not found";
   }
 
+  if (profile.username !== data.username) {
+    return {
+      username: data.username,
+      firstName: data.firstName,
+      lastName: data.lastName,
+      role: data.role,
+      profileImage: data.profileImage,
+    };
+  }
+
+  return {
+    username: data.username,
+    email: data.email,
+    firstName: data.firstName,
+    lastName: data.lastName,
+    phoneNumber: data.phoneNumber,
+    roomNumber: data.roomNumber,
+    role: data.role,
+    profileImage: data.profileImage,
+  };
+}
+
+export async function getUserById({
+  params: { id }, // Accept `id` as the parameter
+  userToken,
+  headers,
+  set,
+  cookie: { auth },
+}: {
+  params: { id: string }; // Change to accept `id` instead of `username`
+  set: { status: number };
+  body: any;
+  headers: any;
+  cookie: { auth: any };
+  userToken: any;
+}) {
+  let token = headers.authorization;
+  if (token !== undefined) {
+    token = token.replace("Bearer ", "");
+  } else if (auth.value !== undefined) {
+    token = auth.value;
+  }
+
+  if (token === undefined) {
+    set.status = 401;
+    return "Unauthorized";
+  }
+
+  let profile = await userToken.verify(token);
+  if (!profile) {
+    set.status = 401;
+    return "Unauthorized";
+  }
+
+  profile = profile as {
+    username: string;
+    iat: number;
+  };
+
+  const db = getDb();
+  const usersCollection = db.collection("users");
+
+  // Convert the `id` string to a MongoDB ObjectId
+  let objectId;
+  try {
+    objectId = new ObjectId(id); // Convert `id` to ObjectId
+  } catch (err) {
+    set.status = 400; // Bad request if `id` is invalid
+    return "Invalid ID format";
+  }
+
+  // Fetch user data by ObjectId
+  const data = await usersCollection.findOne({ _id: objectId });
+
+  if (!data) {
+    set.status = 404;
+    return "User not found";
+  }
+
+  // Check if the logged-in user is trying to access their own profile
   if (profile.username !== data.username) {
     return {
       username: data.username,

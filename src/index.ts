@@ -5,6 +5,7 @@ import {
   createUser,
   deleteUser,
   getUser,
+  getUserById,
   login,
   updateSelfProfile,
   verifyToken,
@@ -23,6 +24,7 @@ const app = new Elysia()
   .post("/api/v1/register", createUser)
   .post("/api/v1/login", login)
   .get("/api/v1/user/:username", getUser)
+  .get("/api/v1/userid/:id", getUserById)
   .put("/api/v1/user/update", updateSelfProfile)
   .delete("/api/v1/user/delete", deleteUser)
   .get("/api/v1/*", fallbackRoute)
