@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  user-service:
+    container_name: user-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3773:3773" # Maps container's port 3773 to host
+    environment:
+      - MONGO_URI="mongodb+srv://earth:pywt@user-cluster.kderd.mongodb.net/?retryWrites=true&w=majority&appName=user-cluster" # Replace with your actual MongoDB Atlas URI
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
