@@ -39,7 +39,7 @@ export async function createUser({
 
   const userSchemaVerified = isUserSchemaValid(body);
   if (!userSchemaVerified.result) {
-    set.status = 400;
+    set.status = 401;
     return userSchemaVerified;
   }
 
